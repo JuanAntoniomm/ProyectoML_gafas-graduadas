@@ -1,0 +1,7 @@
+# Dependencias de los scrapers.
+# Versiones fijadas a propósito: el modelo del proyecto anterior no se podía
+# cargar porque requirements.txt no fijaba ninguna. No repetir el error.
+requests==2.32.3
+beautifulsoup4==4.12.3
+pandas==2.2.3
+selenium==4.27.1        # solo lo necesita generaloptica.py (renderiza con JS)
