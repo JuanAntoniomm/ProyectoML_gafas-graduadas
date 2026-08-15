@@ -148,18 +148,38 @@ with der:
         "características en el catálogo de estas dos cadenas."
     )
 
-    reales = d[(d["marca"] == marca) & (d["tienda"] == tienda)]["pvp"]
+    # Precios reales de la marca en TODO el dataset, no solo en la tienda
+    # elegida. Solo el 12 % de las marcas está en las dos cadenas, así que
+    # filtrar por marca+tienda dejaba el recuadro sin datos casi la mitad de
+    # las veces. Por marca sola hay muestra suficiente en el 93 % de los casos.
+    reales = d[d["marca"] == marca]["pvp"]
     if len(reales) >= 3:
         st.info(
-            f"**{marca}** en **{tienda}**: {len(reales)} monturas reales en el "
-            f"dataset, de {reales.min():,.0f} € a {reales.max():,.0f} €, "
-            f"mediana {reales.median():,.0f} €."
+            f"**{marca}** en el dataset: {len(reales)} monturas reales, "
+            f"de {reales.min():,.0f} € a {reales.max():,.0f} €, "
+            f"mediana **{reales.median():,.0f} €**."
         )
     else:
         st.warning(
-            f"Solo hay {len(reales)} montura(s) de **{marca}** en **{tienda}** "
-            "en el dataset. La predicción para esta combinación es poco fiable."
+            f"Solo hay {len(reales)} montura(s) de **{marca}** en todo el "
+            "dataset. La predicción para esta marca es poco fiable."
         )
+
+    # Que una marca falte en una cadena no es un hueco de datos: es el hallazgo
+    # del proyecto. El 69 % de las marcas solo está en General Óptica y el 20 %
+    # solo en Óptica 2000; apenas el 12 % está en las dos.
+    en_tiendas = sorted(d.loc[d["marca"] == marca, "tienda"].unique())
+    if len(en_tiendas) == 2:
+        st.caption("Esta marca se vende en las dos cadenas — solo el 12 % lo hace.")
+    elif en_tiendas and tienda not in en_tiendas:
+        otra = en_tiendas[0]
+        st.caption(
+            f"**{marca} no se vende en {tienda}**, solo en {otra}. La predicción "
+            "es una extrapolación: el modelo estima qué costaría si la vendiera. "
+            "Que falte no es un vacío del dataset, es el resultado del notebook 01."
+        )
+    elif en_tiendas:
+        st.caption(f"Esta marca solo se vende en {en_tiendas[0]}.")
 
 st.divider()
 
