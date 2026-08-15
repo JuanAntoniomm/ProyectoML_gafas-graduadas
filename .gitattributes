@@ -1,4 +1,17 @@
+# Normalizacion de finales de linea. Sin esto, Git en Windows convierte LF a
+# CRLF al hacer checkout y luego marca como modificados archivos cuyo contenido
+# no ha cambiado (4.826 lineas "distintas" con el mismo texto).
+* text=auto eol=lf
+
+# Artefactos grandes por Git LFS
 models/*.pkl filter=lfs diff=lfs merge=lfs -text
 models/*.h5 filter=lfs diff=lfs merge=lfs -text
 models/*.pt filter=lfs diff=lfs merge=lfs -text
 models/*.joblib filter=lfs diff=lfs merge=lfs -text
+
+# EXCEPCION, y va al final A PROPOSITO: en .gitattributes gana la ULTIMA regla
+# que coincide, asi que esta linea tiene que ir DESPUES de models/*.pkl.
+# El modelo de la v2 son 9,4 MB, muy por debajo del limite de 100 MB de GitHub.
+# Va como archivo normal: LFS complica el despliegue en Streamlit Cloud y
+# consume la cuota gratuita (1 GB de almacenamiento y 1 GB/mes de trafico).
+models/modelo_pvp.pkl -filter -diff -merge -text

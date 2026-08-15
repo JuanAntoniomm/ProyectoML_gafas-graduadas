@@ -1,304 +1,267 @@
 """
-app_streamlit/app.py
-====================
+app.py
+======
 
-App Streamlit del proyecto: predice el precio de mercado de una montura de
-gafas graduadas a partir de sus atributos (marca, género, material, medidas,
-etc.) y muestra los productos más parecidos del catálogo de Lentiamo.
+Demostrador del modelo de precio de catálogo (PVP) de monturas graduadas.
 
-Modelo: RandomForestRegressor entrenado en `notebooks/03_Modelado.ipynb` y
-guardado en `models/final_model.pkl`. El split train/test se hace al inicio
-del pipeline para evitar fuga de datos. Métricas en test: MAE 17.18 € · R² 0.87.
-
-Uso local:
     streamlit run app_streamlit/app.py
 
-Despliegue:
-    Conectar este repo a Streamlit Community Cloud y apuntar a este fichero
-    como entrypoint.
+QUÉ ES Y QUÉ NO ES ESTA APP:
+    No es una herramienta de pricing para ópticas. El precio de unas gafas
+    graduadas lo dominan la lente, el laboratorio, el local y el tiempo del
+    optometrista, no la montura.
+
+    Es un demostrador del hallazgo del proyecto: **la marca explica el 81 % de
+    la varianza del precio y la geometría de la montura el 16 %**. Por eso la
+    sección principal no es "cuánto vale esto" sino "cuánto cambia el precio de
+    la MISMA montura según el nombre que lleve escrito".
 """
 
+from __future__ import annotations
+
+import json
+import sys
 from pathlib import Path
 
 import joblib
-import numpy as np
 import pandas as pd
 import streamlit as st
 
-# ---------------------------------------------------------------------------
-# Rutas (relativas al fichero, funcionan local y en Streamlit Cloud)
-# ---------------------------------------------------------------------------
-ROOT = Path(__file__).resolve().parent.parent
-MODEL_PATH = ROOT / 'models' / 'final_model.pkl'
-MARCAS_TIER = ROOT / 'data' / 'raw' / 'marcas_tier.csv'
-MATERIALES_TIER = ROOT / 'data' / 'raw' / 'materiales_tier.csv'
-CATALOGO = ROOT / 'data' / 'processed' / 'lentiamo_graduadas_clean.csv'
+RAIZ = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(RAIZ / "src" / "modelado"))
+sys.path.insert(0, str(RAIZ / "src" / "scraping"))
+from datos import CAT, FEATURES, NUM, cargar  # noqa: E402
+from marcas import normalizar  # noqa: E402
 
-MAE_TEST = 17.18  # MAE del RandomForest en el conjunto de test (referencia)
+MODELO = RAIZ / "models" / "modelo_pvp.pkl"
+METRICAS = RAIZ / "models" / "metricas.json"
+
+st.set_page_config(page_title="Precio de monturas graduadas",
+                   page_icon="👓", layout="wide")
 
 
 # ---------------------------------------------------------------------------
-# Carga cacheada
+# Carga (en caché: el modelo son 9,4 MB y el dataset 6.121 filas)
 # ---------------------------------------------------------------------------
 @st.cache_resource
 def cargar_modelo():
-    return joblib.load(MODEL_PATH)
+    if not MODELO.exists():
+        st.error(f"No encuentro `{MODELO.relative_to(RAIZ)}`. "
+                 "Ejecuta antes: `python src/modelado/entrenar.py`")
+        st.stop()
+    return joblib.load(MODELO)
 
 
 @st.cache_data
-def cargar_marcas() -> pd.DataFrame:
-    return pd.read_csv(MARCAS_TIER, sep=';')
+def cargar_metricas() -> dict:
+    return json.loads(METRICAS.read_text(encoding="utf-8")) if METRICAS.exists() else {}
 
 
 @st.cache_data
-def cargar_materiales() -> pd.DataFrame | None:
-    if not MATERIALES_TIER.exists():
-        return None
-    # OJO: materiales_tier.csv usa coma como separador (no ';' como marcas)
-    return pd.read_csv(MATERIALES_TIER)
+def cargar_datos() -> pd.DataFrame:
+    return cargar()
 
 
-@st.cache_data
-def cargar_catalogo() -> pd.DataFrame:
-    return pd.read_csv(CATALOGO)
+modelo = cargar_modelo()
+info = cargar_metricas()
+d = cargar_datos()
 
+MAE = info.get("test", {}).get("MAE_eur", 18.9)
+R2 = info.get("test", {}).get("R2", 0.85)
 
-# ---------------------------------------------------------------------------
-# Enriquecimiento experto (replica la lógica del notebook 02 + predict_example)
-# ---------------------------------------------------------------------------
-def enriquecer_marca(p: dict, marcas: pd.DataFrame) -> dict:
-    """Añade gama_marca, segmento_comercial, pais_origen y precio_medio_marca."""
-    fila = marcas[marcas['marca'] == p['marca']]
-    if len(fila) == 0:
-        p['gama_marca'] = 'gama_media'
-        p['segmento_comercial'] = 'moda_casual'
-        p['pais_origen'] = 'Desconocido'
-        p['precio_medio_marca'] = 100.0
-        return p
-
-    m = fila.iloc[0]
-    p['gama_marca'] = m['tier']
-    p['segmento_comercial'] = m['segmento']
-    p['pais_origen'] = m['pais_origen']
-    pmin = float(m['precio_min']) if pd.notna(m['precio_min']) else 0.0
-    pmax = float(m['precio_max']) if pd.notna(m['precio_max']) else 0.0
-    p['precio_medio_marca'] = (pmin + pmax) / 2 if (pmin + pmax) > 0 else 100.0
-    return p
-
-
-def enriquecer_material(p: dict, mat_df: pd.DataFrame | None) -> dict:
-    """Añade categoria_material, gama_material y peso_relativo (si están)."""
-    if mat_df is None:
-        return p
-    fila = mat_df[mat_df['material_montura'] == p['material_montura']]
-    if len(fila) == 0:
-        p['categoria_material'] = 'otro'
-        p['gama_material'] = 'gama_media'
-        p['peso_relativo'] = 'medio'
-        return p
-    m = fila.iloc[0]
-    p['categoria_material'] = m['categoria_material']
-    p['gama_material'] = m['gama_material']
-    p['peso_relativo'] = m['peso_relativo']
-    return p
-
-
-def features_del_modelo(model) -> list:
-    """Recupera el orden exacto de columnas que espera el ColumnTransformer."""
-    prep = model.named_steps['prep']
-    cols: list = []
-    for name, _, c in prep.transformers_:
-        if name != 'remainder':
-            cols.extend(c)
-    return cols
-
+# Opciones de los desplegables, sacadas del dataset real para que no haya
+# combinaciones inventadas que el modelo nunca ha visto.
+#
+# Las dos tiendas escriben algunas marcas distinto: "Ray Ban" / "Ray-Ban",
+# "D&G" / "Dolce&Gabbana", "Vogue" / "Vogue Eyewear". El MODELO las trata como
+# categorías separadas a propósito (normalizarlas se midió y empeora el MAE de
+# 18,90 a 19,01 €: la grafía funciona como identificador encubierto de la
+# tienda). Pero en el desplegable no tiene sentido ofrecer la misma marca dos
+# veces, así que aquí se muestra la grafía más frecuente de cada una y esa es
+# la que se le pasa al modelo.
+_frec = d.dropna(subset=["marca"]).groupby("marca").size()
+_canon = {}
+for m, n in _frec.items():
+    k = normalizar(m)
+    if k not in _canon or n > _frec[_canon[k]]:
+        _canon[k] = m
+marcas = sorted(_canon.values())
+marca_a_grupo = d.dropna(subset=["marca"]).groupby("marca")["grupo"].first().to_dict()
+tiendas = sorted(d["tienda"].unique())
+materiales = sorted(d["material_montura"].dropna().unique())
+colores = sorted(d["color"].dropna().unique())
+generos = sorted(d["genero"].dropna().unique())
 
 # ---------------------------------------------------------------------------
-# Productos similares (distancia euclídea en features numéricas estandarizadas)
+# Cabecera
 # ---------------------------------------------------------------------------
-def productos_similares(enriched: dict, catalogo: pd.DataFrame, n: int = 3) -> pd.DataFrame:
-    num_cols = ['ancho_lente', 'ancho_puente', 'largo_varilla', 'peso', 'precio_medio_marca']
-    user_num = np.array([enriched[c] for c in num_cols], dtype=float)
-    cat_num = catalogo[num_cols].values.astype(float)
-    means = np.nanmean(cat_num, axis=0)
-    stds = np.nanstd(cat_num, axis=0) + 1e-9
-    u_s = (user_num - means) / stds
-    c_s = np.nan_to_num((cat_num - means) / stds, nan=0.0)
-    dists = np.linalg.norm(c_s - u_s, axis=1)
-    idx = np.argsort(dists)[:n]
-    return catalogo.iloc[idx][['marca', 'modelo', 'forma', 'material_montura', 'color', 'precio']].copy()
-
-
-# ---------------------------------------------------------------------------
-# UI
-# ---------------------------------------------------------------------------
-st.set_page_config(
-    page_title='Pricing gafas graduadas',
-    page_icon=None,
-    layout='wide',
+st.title("👓 ¿Qué determina el precio de una montura?")
+st.markdown(
+    "Modelo entrenado con **6.121 monturas graduadas** de Óptica 2000 y General "
+    "Óptica, capturadas en agosto de 2026. Predice el **precio de catálogo (PVP)**, "
+    "no el precio promocional del día."
 )
 
-st.title('Predicción del precio de gafas graduadas')
-st.caption(
-    'Modelo: RandomForest entrenado sobre 2.295 productos del catálogo de Lentiamo · '
-    f'MAE en test = {MAE_TEST:.2f} € · R² = 0.87'
-)
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Error medio", f"{MAE:.2f} €")
+c2.metric("R² en test", f"{R2:.3f}")
+c3.metric("Productos", f"{len(d):,}".replace(",", "."))
+c4.metric("Marcas", d["marca"].nunique())
 
-# Carga de recursos
-try:
-    model = cargar_modelo()
-    marcas = cargar_marcas()
-    materiales = cargar_materiales()
-    catalogo = cargar_catalogo()
-except Exception as e:
-    st.error(f'No se pudieron cargar los recursos del modelo:\n\n{e}')
-    st.stop()
-
-# Opciones del formulario (derivadas de los datos para que estén siempre alineadas)
-marcas_opt = sorted(marcas['marca'].dropna().unique().tolist())
-generos_opt = sorted(catalogo['genero'].dropna().unique().tolist())
-materiales_opt = sorted(catalogo['material_montura'].dropna().unique().tolist())
-formas_opt = sorted(catalogo['forma'].dropna().unique().tolist())
-tipos_opt = sorted(catalogo['tipo_montura'].dropna().unique().tolist())
-colores_opt = sorted(catalogo['color'].dropna().unique().tolist())
-tallas_opt = sorted(catalogo['talla'].dropna().unique().tolist())
-
-
-def _default_idx(options, preferred):
-    return options.index(preferred) if preferred in options else 0
-
-
-with st.form('form_gafas'):
-    st.subheader('Características de la gafa')
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        marca = st.selectbox('Marca', marcas_opt,
-                             index=_default_idx(marcas_opt, 'Ray-Ban'))
-        genero = st.selectbox('Género', generos_opt,
-                              index=_default_idx(generos_opt, 'Unisex'))
-        material_montura = st.selectbox('Material de la montura', materiales_opt,
-                                        index=_default_idx(materiales_opt, 'Acetato'))
-    with c2:
-        forma = st.selectbox('Forma', formas_opt,
-                             index=_default_idx(formas_opt, 'Rectangulares'))
-        tipo_montura = st.selectbox('Tipo de montura', tipos_opt,
-                                    index=_default_idx(tipos_opt, 'Montura completa'))
-        color = st.selectbox('Color', colores_opt,
-                             index=_default_idx(colores_opt, 'negro'))
-    with c3:
-        talla = st.selectbox('Talla', tallas_opt,
-                             index=_default_idx(tallas_opt, 'M'))
-        ancho_lente = st.slider('Ancho de lente (mm)', 40.0, 65.0, 54.0, 0.5)
-        ancho_puente = st.slider('Ancho de puente (mm)', 12.0, 25.0, 17.0, 0.5)
-
-    c4, c5 = st.columns(2)
-    with c4:
-        largo_varilla = st.slider('Largo de varilla (mm)', 120.0, 155.0, 140.0, 0.5)
-    with c5:
-        peso = st.slider('Peso (g)', 10.0, 60.0, 25.0, 0.5)
-
-    submitted = st.form_submit_button('Predecir precio', type='primary')
+st.divider()
 
 # ---------------------------------------------------------------------------
-# Resultado
+# Formulario
 # ---------------------------------------------------------------------------
-if submitted:
-    user_input = {
-        'marca': marca, 'genero': genero, 'material_montura': material_montura,
-        'forma': forma, 'tipo_montura': tipo_montura, 'color': color, 'talla': talla,
-        'ancho_lente': ancho_lente, 'ancho_puente': ancho_puente,
-        'largo_varilla': largo_varilla, 'peso': peso,
-    }
-    enriched = enriquecer_marca(dict(user_input), marcas)
-    enriched = enriquecer_material(enriched, materiales)
+izq, der = st.columns([1, 1.4])
 
-    feats = features_del_modelo(model)
-    row = {f: enriched.get(f, np.nan) for f in feats}
-    X = pd.DataFrame([row])[feats]
-    precio = float(model.predict(X)[0])
+with izq:
+    st.subheader("Configura la montura")
+    # Por defecto, la marca con más referencias en el dataset.
+    _defecto = max(marcas, key=lambda m: int(_frec.get(m, 0)))
+    marca = st.selectbox("Marca", marcas, index=marcas.index(_defecto))
+    grupo = marca_a_grupo.get(marca, "desconocido")
+    st.caption(f"Grupo propietario: **{grupo}**")
 
-    st.divider()
-    st.subheader('Resultado')
+    tienda = st.selectbox("Tienda", tiendas)
+    material = st.selectbox("Material de la montura", materiales)
+    color = st.selectbox("Color", colores)
+    genero = st.selectbox("Género", generos)
+    ancho_lente = st.slider("Ancho de lente (mm)", 35, 65, 52)
+    ancho_puente = st.slider("Ancho del puente (mm)", 12, 30, 18)
 
-    col_a, col_b = st.columns([2, 3])
-    with col_a:
-        st.metric(
-            label='Precio estimado',
-            value=f'{precio:.2f} €',
-            delta=f'± {MAE_TEST:.2f} € (MAE en test)',
-            delta_color='off',
-        )
-        st.markdown(
-            f"""
-            **Tier de marca:** {enriched['gama_marca']}
-            **Segmento comercial:** {enriched['segmento_comercial']}
-            **País de origen:** {enriched['pais_origen']}
-            **Precio medio de la marca:** {enriched['precio_medio_marca']:.0f} €
-            **Categoría del material:** {enriched.get('categoria_material', '—')}
-            """
-        )
-    with col_b:
-        st.markdown('**Productos más parecidos del catálogo** (geometría y precio de marca similares):')
-        sim = productos_similares(enriched, catalogo, n=3)
-        sim_show = sim.rename(columns={
-            'marca': 'Marca',
-            'modelo': 'Modelo',
-            'forma': 'Forma',
-            'material_montura': 'Material',
-            'color': 'Color',
-            'precio': 'Precio (€)',
-        })
-        sim_show['Precio (€)'] = sim_show['Precio (€)'].map(lambda x: f'{x:.2f}')
-        st.dataframe(sim_show, hide_index=True, use_container_width=True)
+ficha = pd.DataFrame([{
+    "marca": marca, "grupo": grupo, "tienda": tienda,
+    "material_montura": material, "color": color, "genero": genero,
+    "ancho_lente": float(ancho_lente), "ancho_puente": float(ancho_puente),
+}])[FEATURES]
 
-    with st.expander('¿Cómo funciona esta predicción?'):
-        st.markdown(
-            """
-            La predicción combina los **atributos que introduces** con
-            **conocimiento experto** de cada marca (tier, segmento comercial,
-            país, precio medio histórico) y de cada material (categoría, gama,
-            peso relativo). Esa información viene de un enriquecimiento manual
-            del catálogo, no del scraping puro.
+pred = float(modelo.predict(ficha)[0])
 
-            El modelo es un **RandomForestRegressor** entrenado sobre 2.295
-            productos del catálogo de Lentiamo. El conjunto de test
-            (575 productos) se separó al inicio del pipeline, antes de cualquier
-            imputación o feature engineering, para evitar **fuga de datos**.
-
-            **Métricas en test:** MAE = 17.18 € · RMSE = 25.85 € · R² = 0.87
-            · MAPE = 15.11 %. Sobre una mediana de mercado de 114 € eso
-            equivale a un error medio de unos 15 puntos porcentuales, razonable
-            para una herramienta de pricing asistido.
-            """
-        )
-else:
-    st.info('Rellena el formulario y pulsa **Predecir precio** para obtener una estimación.')
-
-
-# ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.header('Acerca de')
-    st.markdown(
-        """
-        Proyecto final del módulo de **Machine Learning** del bootcamp de
-        Data Science de **The Bridge**.
-
-        Predice el precio de mercado de una montura de gafas graduadas a partir
-        de marca, género, material, medidas físicas y otras características.
-        Caso de uso: pricing asistido para una óptica.
-
-        **Pipeline**
-        - Scraping de Lentiamo (75 marcas, ~2.870 productos).
-        - Enriquecimiento experto vía LLMs (Perplexity + NotebookLM) con tier
-          de marca, segmento, país de origen y categoría de material.
-        - Split train/test (80/20) al inicio del pipeline para evitar fuga.
-        - Ablaciones de features + análisis VIF para llegar a 5 numéricas
-          + 13 categóricas.
-        - GridSearchCV sobre RandomForest.
-
-        **Repo:** [github.com/aJk15lml/THE-BRIDGE](https://github.com/aJk15lml/THE-BRIDGE)
-        """
+with der:
+    st.subheader("Precio de catálogo estimado")
+    st.markdown(f"# {pred:,.2f} €".replace(",", "."))
+    st.caption(
+        f"El modelo se equivoca de media en **{MAE:.2f} €**, así que el rango "
+        f"razonable es **{max(pred - MAE, 0):,.0f} – {pred + MAE:,.0f} €**. "
+        "No es un precio de venta: es lo que costaría una montura con estas "
+        "características en el catálogo de estas dos cadenas."
     )
+
+    # Precios reales de la marca en TODO el dataset, no solo en la tienda
+    # elegida. Solo el 12 % de las marcas está en las dos cadenas, así que
+    # filtrar por marca+tienda dejaba el recuadro sin datos casi la mitad de
+    # las veces. Por marca sola hay muestra suficiente en el 93 % de los casos.
+    reales = d[d["marca"] == marca]["pvp"]
+    if len(reales) >= 3:
+        st.info(
+            f"**{marca}** en el dataset: {len(reales)} monturas reales, "
+            f"de {reales.min():,.0f} € a {reales.max():,.0f} €, "
+            f"mediana **{reales.median():,.0f} €**."
+        )
+    else:
+        st.warning(
+            f"Solo hay {len(reales)} montura(s) de **{marca}** en todo el "
+            "dataset. La predicción para esta marca es poco fiable."
+        )
+
+    # Que una marca falte en una cadena no es un hueco de datos: es el hallazgo
+    # del proyecto. El 69 % de las marcas solo está en General Óptica y el 20 %
+    # solo en Óptica 2000; apenas el 12 % está en las dos.
+    en_tiendas = sorted(d.loc[d["marca"] == marca, "tienda"].unique())
+    if len(en_tiendas) == 2:
+        st.caption("Esta marca se vende en las dos cadenas — solo el 12 % lo hace.")
+    elif en_tiendas and tienda not in en_tiendas:
+        otra = en_tiendas[0]
+        st.caption(
+            f"**{marca} no se vende en {tienda}**, solo en {otra}. La predicción "
+            "es una extrapolación: el modelo estima qué costaría si la vendiera. "
+            "Que falte no es un vacío del dataset, es el resultado del notebook 01."
+        )
+    elif en_tiendas:
+        st.caption(f"Esta marca solo se vende en {en_tiendas[0]}.")
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# La sección que demuestra el hallazgo del proyecto
+# ---------------------------------------------------------------------------
+st.subheader("La misma montura, distinta marca")
+st.markdown(
+    "Aquí está la conclusión del proyecto hecha interactiva. Se mantienen "
+    "**exactamente los mismos atributos físicos** —material, color, género y "
+    "calibre— y solo se cambia la marca. Todo lo que se mueva en el gráfico "
+    "es precio que **no viene del producto**."
+)
+
+n_marcas = st.slider("Cuántas marcas comparar", 5, 30, 15)
+frecuentes = d["marca"].value_counts().head(n_marcas).index.tolist()
+if marca not in frecuentes:
+    frecuentes = [marca] + frecuentes[:-1]
+
+comparacion = pd.DataFrame([{
+    "marca": m, "grupo": marca_a_grupo.get(m, "desconocido"), "tienda": tienda,
+    "material_montura": material, "color": color, "genero": genero,
+    "ancho_lente": float(ancho_lente), "ancho_puente": float(ancho_puente),
+} for m in frecuentes])
+
+comparacion["PVP estimado (€)"] = modelo.predict(comparacion[FEATURES]).round(2)
+comparacion = comparacion.sort_values("PVP estimado (€)", ascending=False)
+
+g1, g2 = st.columns([1.5, 1])
+with g1:
+    st.bar_chart(comparacion.set_index("marca")["PVP estimado (€)"], height=380)
+with g2:
+    st.dataframe(
+        comparacion[["marca", "grupo", "PVP estimado (€)"]].reset_index(drop=True),
+        hide_index=True, height=380,
+    )
+
+mn, mx = comparacion["PVP estimado (€)"].min(), comparacion["PVP estimado (€)"].max()
+st.success(
+    f"**Con los mismos atributos físicos, el precio va de {mn:,.0f} € a "
+    f"{mx:,.0f} €: una diferencia de {mx - mn:,.0f} € ({mx / mn:.1f}×).** "
+    "El material, el color y el calibre no han cambiado. Solo el nombre."
+)
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Honestidad sobre el modelo
+# ---------------------------------------------------------------------------
+with st.expander("Qué explica realmente el precio, y qué no puede hacer este modelo"):
+    st.markdown(f"""
+**Cuánto explica cada bloque de variables por sí solo** (R² en test, notebook 02):
+
+| Con solo… | R² |
+|---|---:|
+| la marca | **0,81** |
+| el grupo propietario | 0,24 |
+| la geometría (calibre y puente) | 0,16 |
+| la tienda | **0,00** |
+
+Que la tienda dé **0,00** no es un fallo: es un resultado. El precio de catálogo
+de una montura es el mismo la venda quien la venda. Se comprobó primero sobre los
+110 productos idénticos presentes en las dos cadenas —el PVP coincide dentro de
+±5 % en el 99 % de los casos— y luego el modelo lo confirmó por su cuenta.
+
+**Limitaciones, sin adornos:**
+
+- Son precios de **catálogo online** de dos cadenas concretas. En España la venta
+  online es en torno al 10 % del mercado de gafas graduadas.
+- Es una **foto de agosto de 2026**.
+- El modelo **infraestima las monturas caras**: por encima de 300 € hay pocos
+  datos y muy heterogéneos.
+- **No sirve para fijar precios en una óptica.** Su margen de error es de
+  {MAE:.0f} € sobre una mediana de 158 €, y no conoce ni tus costes ni tus
+  proveedores ni tu clientela.
+- Mide **asociación, no causalidad**: que la marca prediga el precio no demuestra
+  que la marca lo cause.
+""")
+
+st.caption(
+    "Juan Antonio Muñoz Moreno · [github.com/JuanAntoniomm]"
+    "(https://github.com/JuanAntoniomm) · Datos capturados respetando el "
+    "robots.txt de ambas webs · El código de los scrapers y los notebooks de "
+    "análisis están en el repositorio."
+)

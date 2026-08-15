@@ -1,5 +1,14 @@
-streamlit
-pandas
-numpy
-scikit-learn
-joblib
+# Dependencias del proyecto completo: scrapers, modelado y app.
+# Versiones fijadas a proposito: el modelo de la version anterior no se podia
+# cargar porque requirements.txt no fijaba ninguna y el pickle exigia una
+# version concreta de scikit-learn que nadie habia anotado.
+requests==2.32.3
+beautifulsoup4==4.12.3
+selenium==4.27.1
+pandas==2.2.3
+numpy==2.1.3
+scikit-learn==1.7.2
+joblib==1.4.2
+matplotlib==3.9.2
+seaborn==0.13.2
+streamlit==1.41.1
