@@ -1,203 +1,184 @@
-# Predicción del precio de gafas graduadas con Machine Learning
+# ¿Qué determina el precio de unas gafas graduadas?
 
-## Resumen
+Análisis de **6.121 monturas graduadas** de las dos grandes cadenas de óptica que venden online en España, con datos capturados por scrapers propios en agosto de 2026.
 
-Este proyecto desarrolla un modelo de *Machine Learning* para estimar el precio de gafas graduadas a partir de variables físicas del producto y variables comerciales ligadas al posicionamiento de marca.
+**La respuesta corta: la marca explica el 81 % de la varianza del precio. La geometría de la montura, el 16 %.**
 
-La idea central no es solo predecir un número, sino entender mejor cómo se construye el valor de este tipo de producto en un catálogo real:
+---
 
-> el precio no depende únicamente de la geometría de la montura, sino también de la marca, el segmento y la percepción de valor asociada al producto
+## La pregunta
 
-## Problema de negocio
+Las dos cadenas analizadas pertenecen a **fabricantes de gafas rivales entre sí**:
 
-En un catálogo amplio, fijar o validar precios de forma manual puede ser lento, poco consistente y difícil de escalar. Un modelo predictivo como este puede ayudar a:
+| Cadena | Propietario | Fuente (verificada 1 ago 2026) |
+|---|---|---|
+| Óptica 2000 | Grandvisión Spain → **EssilorLuxottica** | Pie de página de `optica2000.com` + comunicado de EssilorLuxottica (adquisición de GrandVision cerrada el 1 jul 2021) |
+| General Óptica | **Grupo De Rigo** | `derigo.com`: *"its chains General Optica, Mais Optica and Opmar Optik"* |
 
-- apoyar decisiones de *pricing*
-- detectar productos potencialmente mal posicionados en precio
-- analizar diferencias entre marcas y segmentos
-- aportar una referencia objetiva para tareas de catálogo y negocio
+Eso permite plantear algo que no es una pregunta de producto sino de estructura de mercado:
 
-## Objetivo del proyecto
+> **¿Condiciona la propiedad del minorista lo que vende y a qué precio?**
 
-Construir un flujo completo de proyecto de datos, desde la adquisición de la información hasta la evaluación e interpretación del modelo final.
+Es falsable y se responde contando referencias.
 
-El trabajo incluye:
+## Lo que este proyecto NO es
 
-- adquisición y consolidación de datos
-- limpieza e imputación
-- análisis exploratorio
-- *feature engineering*
-- entrenamiento y comparación de modelos
-- selección del modelo final
-- evaluación en test
-- interpretación técnica y de negocio
+No es una herramienta de pricing para ópticas, y conviene decirlo antes que nada. El precio de unas gafas graduadas lo dominan la lente, el laboratorio, el local y el tiempo del optometrista — no la montura. Un modelo de precios de montura no le ahorra dinero a una óptica.
 
-## Dataset
+Lo que hace es medir **cómo la concentración del sector se refleja en el surtido y en el precio de catálogo**.
 
-El dataset se construyó a partir de datos de catálogo y enriquecimiento adicional de marca y materiales.
+---
 
-Variables principales:
+## Los tres hallazgos
 
-- marca
-- género
-- material de montura
-- forma
-- color
-- talla
-- ancho de lente
-- ancho de puente
-- largo de varilla
-- peso
-- país de origen
-- gama de marca
-- segmento comercial
-- `precio_medio_marca`
+### 1. La exclusión entre cadenas va en una sola dirección
 
-El proyecto utiliza las siguientes carpetas de datos:
+| Grupo | Óptica 2000 | General Óptica |
+|---|---:|---:|
+| **EssilorLuxottica** | **71,1 %** | 36,5 % |
+| **GrandVision** (marca blanca propia) | **19,1 %** | 0 % |
+| **De Rigo** | **0,6 %** | **27,6 %** |
+| Kering Eyewear | 3,3 % | 4,7 % |
+| Safilo | 0,5 % | 8,4 % |
+| **Marchon** | **0 %** | 3,5 % |
+| Marcolin | 2,2 % | 3,7 % |
+| Thélios (LVMH) | **0 %** | 0,7 % |
 
-- `data/raw`
-- `data/processed`
-- `data/train`
-- `data/test`
+El **90,2 %** del catálogo de Óptica 2000 pertenece a su propietario o a su propia marca blanca. Todos los fabricantes rivales juntos suman **6,6 %**, y cuatro grupos completos están en cero — entre ellos Marchon, que licencia Nike, Lacoste, Calvin Klein y Ferragamo.
 
-## Estructura del repositorio
+La hipótesis de partida era simétrica —cada cadena favorece lo suyo— y **los datos la desmienten**: General Óptica dedica a EssilorLuxottica un 36,5 % de lo que lista y un 24,5 % de lo que tiene en stock, muy por encima del 6,6 % que Óptica 2000 dedica a *todos* sus rivales.
 
-```text
-Proyecto ML/
-|-- data/
-|   |-- raw/
-|   |-- processed/
-|   |-- train/
-|   |-- test/
-|
-|-- notebooks/
-|   |-- 01_Fuentes.ipynb
-|   |-- 02_LimpiezaEDA.ipynb
-|   |-- 03_Modelado.ipynb
-|
-|-- src/
-|-- models/
-|-- app_streamlit/
-|-- docs/
-|-- README.md
+De Rigo no puede sostener una cadena de ópticas en España sin Ray-Ban. EssilorLuxottica sí puede sostener una sin Police.
+
+### 2. El precio de catálogo está alineado; lo que cambia es el descuento
+
+Cruzando por **EAN** los 110 productos físicamente idénticos presentes en las dos cadenas, el mismo día:
+
+```
+PRECIO DE CATÁLOGO (PVP)     diferencia mediana  +0,7 %   ·   |dif| < 5 % en el 99 % de los casos
+PRECIO QUE PAGA EL CLIENTE   diferencia mediana −23,8 %
 ```
 
-## Flujo de trabajo
+El precio nominal es prácticamente el mismo la venda quien la venda. La competencia entre estas cadenas no ocurre en el precio de tarifa, sino en el surtido y en la política de descuento.
 
-### `01_Fuentes.ipynb`
+### 3. El precio lo pone el nombre, no la montura
 
-Notebook de adquisición de datos, revisión de fuentes y consolidación del dataset base.
+R² en test de un modelo entrenado solo con cada bloque de variables:
 
-### `02_LimpiezaEDA.ipynb`
+| Con solo… | R² |
+|---|---:|
+| **la marca** | **0,81** |
+| el grupo propietario | 0,24 |
+| la geometría (calibre y puente) | 0,16 |
+| **la tienda** | **0,00** |
 
-Notebook de limpieza, imputación, análisis exploratorio, detección de redundancias y creación de variables.
+Que `tienda` dé **0,00** no es un fallo: es la confirmación independiente del hallazgo 2. Se observó primero sobre 110 productos y luego el modelo lo verificó por su cuenta sobre 6.120.
 
-### `03_Modelado.ipynb`
+---
 
-Notebook de construcción de *pipelines*, comparación de modelos, validación cruzada, *grid search*, evaluación final e interpretación.
+## El modelo
 
-## Metodología
+RandomForest sobre el **PVP** (precio de catálogo). Métricas en test, leídas de [`models/metricas.json`](models/metricas.json):
 
-El proyecto se desarrolló con una lógica iterativa y orientada a toma de decisiones:
+| | MAE | RMSE | R² | MAPE |
+|---|---:|---:|---:|---:|
+| **RandomForest** | **18,90 €** | 30,81 € | **0,850** | 10,64 % |
+| Ridge (sobre log) | 19,71 € | 31,23 € | 0,846 | 11,33 % |
+| HistGradientBoosting | 22,77 € | 36,75 € | 0,787 | 13,42 % |
+| *Baseline: predecir la media* | *61,74 €* | *79,71 €* | *−0,003* | *46,52 %* |
 
-1. revisión y validación del dato
-2. análisis exploratorio para entender el problema
-3. creación de variables con sentido físico y comercial
-4. comparación de varias familias de modelos
-5. ablaciones por bloques de variables
-6. selección del modelo final por rendimiento e interpretabilidad
+**Reduce el error del baseline un 69 %**, sobre una mediana de precio de 158 €.
 
-Además, se utilizaron:
+---
 
-- *pipelines*
-- validación cruzada
-- *grid search*
+## Tres decisiones que condicionan todo lo demás
 
-Esto permite un flujo reproducible y reduce el riesgo de fugas de información entre entrenamiento y evaluación.
+### El objetivo es el PVP, no el precio del día
 
-## Modelos evaluados
+El **99,9 %** del catálogo de General Óptica estaba rebajado el día de la captura, con un descuento uniforme del 25 % — incluido el **100 % de los productos agotados**. No es una liquidación de stock: es una campaña aplicada a la tarifa.
 
-Se compararon distintos enfoques supervisados:
+Modelar `precio_actual` sería modelar el calendario de marketing de una cadena, y ese calendario cambia cada semana. Por eso el objetivo es:
 
-- `DummyRegressor`
-- `Linear Regression`
-- `Ridge`
-- `Lasso`
-- `ElasticNet`
-- `RandomForestRegressor`
+```python
+pvp = precio_anterior if en_oferta else precio_actual
+```
 
-Los modelos lineales se trabajaron sobre `log_precio`, pero evaluando siempre en euros. Los modelos basados en árboles se entrenaron directamente sobre `precio`.
+Medido: predecir el precio pagado da R² 0,72 frente al 0,85 del PVP. La diferencia es la capa promocional, que no está codificada en ninguna característica del producto.
 
-## Modelo final
+### El split se agrupa por EAN, no es aleatorio
 
-El mejor modelo final fue:
+Hay 110 productos idénticos presentes en las dos cadenas. Con `train_test_split` normal, un Ray-Ban concreto podía caer en *train* por Óptica 2000 y su gemelo exacto en *test* por General Óptica: el modelo lo habría visto durante el entrenamiento y la métrica sería mentira.
 
-- `RandomForestRegressor`
+Se usa `GroupShuffleSplit` agrupando por EAN, y el notebook imprime la comprobación: **0 productos compartidos entre train y test**.
 
-Guardado en:
+### La tabla de grupos se construyó desde fuentes primarias
 
-- `models/final_model_randomforest.pkl`
+[`marcas_grupo.csv`](marcas_grupo.csv) asigna **208 marcas** a su grupo propietario, con **fuente y fecha en cada fila**. Sale de las webs corporativas de EssilorLuxottica, De Rigo, Safilo, Marcolin, Kering Eyewear, Marchon, Thélios y Mondottica.
 
-## Resultados
+Una versión anterior de este proyecto usaba una tabla de gamas de marca generada con un modelo de lenguaje. Al contrastarla con los precios reales observados: **correlación 0,642 y error mediano del 66,8 %** (Max Mara estimada en 260 € frente a 92,90 € reales, sobre 43 productos). Se eliminó por completo.
 
-Métricas del modelo final en test:
+Al reconstruirla desde fuentes primarias aparecieron cuatro asignaciones que se habrían hecho mal de memoria: **Swarovski** y **Moncler** son licencias de EssilorLuxottica y no de Marcolin; **Rodenstock** es socio de marca de De Rigo; y **Bvlgari** pasó de EssilorLuxottica a Thélios en enero de 2024.
 
-| Métrica | Valor |
-| --- | ---: |
-| MAE | **17.78 €** |
-| RMSE | 27.78 € |
-| R² | **0.84** |
-| MAPE | 14.75% |
+---
 
-Comparativa con el finalista lineal:
+## Cómo reproducirlo
 
-| Modelo | MAE | R² |
-| --- | ---: | ---: |
-| Random Forest | **17.78 €** | **0.84** |
-| Ridge | 21.02 € | 0.81 |
+```bash
+pip install -r requirements.txt
 
-La conclusión técnica es clara: el problema presenta cierta estructura lineal, pero el modelo basado en árboles captura mejor relaciones no lineales e interacciones entre variables.
+# 1. Captura (opcional: los CSV ya están en data/raw/)
+python src/scraping/optica2000.py enumerar
+python src/scraping/optica2000.py rastrear --mezclar      # ~20 min
+python src/scraping/generaloptica.py enumerar
+python src/scraping/generaloptica.py rastrear             # ~15 h (Crawl-delay 30 s)
+python src/scraping/exportar.py
 
-## Hallazgos principales
+# 2. Modelo
+python src/modelado/entrenar.py                           # ~5 s
 
-Los resultados del proyecto muestran varios puntos relevantes:
+# 3. App
+streamlit run app_streamlit/app.py
+```
 
-- `precio_medio_marca` fue la variable más influyente en el modelo final
-- la marca y el posicionamiento comercial explican una parte muy importante del precio
-- `peso` aportó más señal que varias variables físicas derivadas
-- algunas variables intuitivas resultaron poco útiles y se descartaron tras las ablaciones
-- el análisis de multicolinealidad ayudó a eliminar variables redundantes
+Los notebooks se ejecutan de principio a fin con los datos incluidos en el repositorio.
 
-En conjunto, el proyecto sugiere que el precio de una gafa graduada está mucho más influido por el universo de marca y su posicionamiento de mercado que por la geometría pura de la montura.
+## Estructura
 
-## Archivos principales
+```
+data/raw/          los dos catálogos capturados (6.121 productos)
+marcas_grupo.csv   marca -> grupo propietario, con fuente y fecha
+notebooks/
+  01_Adquisicion_y_Surtido.ipynb    fuentes, calidad del dato y análisis de surtido
+  02_Modelado_PVP.ipynb             fusión, split por EAN, modelado y ablaciones
+src/scraping/      scrapers con cola reanudable en SQLite
+src/modelado/      carga, features, split y entrenamiento
+app_streamlit/     demostrador interactivo
+models/            modelo entrenado y sus métricas
+decisiones_mlgafas.md   registro de decisiones del proyecto con su evidencia
+```
 
-- dataset procesado: `data/processed/lentiamo_graduadas_clean.csv`
-- train: `data/train/train.csv`
-- test: `data/test/test.csv`
-- modelo final: `models/final_model_randomforest.pkl`
+## Sobre el scrapeo
 
-## Próximos pasos
+Las condiciones de cada sitio se comprobaron **antes** de escribir una línea de código:
 
-Las mejoras más naturales del proyecto serían:
+- **Óptica 2000** — su `robots.txt` solo prohíbe `/cancela-tu-cita` y `/reprograma-tu-cita`. Renderiza en servidor: `requests` + BeautifulSoup, 1 s entre peticiones.
+- **General Óptica** — declara `Crawl-delay: 30`. **Se respeta íntegro**: son ~15 horas de rastreo. Renderiza con JavaScript, así que requiere Selenium.
+- En ambos casos las URLs se enumeran desde el `sitemap.xml`, no desde listados de categoría, y el `User-Agent` identifica el proyecto con un correo de contacto en lugar de hacerse pasar por un navegador.
 
-- trasladar la lógica principal a scripts en `src`
-- desplegar una app de predicción en Streamlit
-- ampliar el dataset con nuevas fuentes o variables de negocio
-- explorar técnicas de explicabilidad más avanzadas como SHAP
-- comparar con modelos boosting en una siguiente iteración
+La cola vive en SQLite y guarda el HTML crudo, de modo que un fallo del parser se corrige y se reexporta **sin repetir el rastreo**.
 
-## Stack utilizado
+## Limitaciones
 
-- Python
-- Pandas
-- NumPy
-- Scikit-learn
-- Matplotlib
-- Seaborn
-- Jupyter Notebooks
+1. **Comercio online.** En España la venta presencial supone en torno al 85-90 % del mercado de gafas graduadas. Esto describe el catálogo web de dos cadenas concretas, no el mercado español.
+2. **Foto de agosto de 2026.** Los precios de catálogo son estables, pero no eternos. Cada fila lleva su `ts_captura`.
+3. **Listar y tener no es lo mismo.** El 63 % del catálogo de General Óptica está agotado, y el 25 % del de Óptica 2000 solo se vende en tienda física. El notebook 01 presenta las dos vistas por separado.
+4. **16 productos (0,26 %) sin grupo asignado.** No se eliminan: borrar filas por una variable ausente sesgaría el recuento.
+5. **El listado de marcas de EssilorLuxottica dice "including"**, así que no es exhaustivo. Solo se contó lo demostrable: su cuota real podría ser mayor, nunca menor.
+6. **El modelo infraestima las monturas caras.** Por encima de 300 € hay pocos datos y muy heterogéneos.
+7. **Correlación, no causalidad.** Que la marca prediga el precio no demuestra que lo cause; ambos podrían responder a un posicionamiento comercial anterior que estos datos no observan.
 
-## Autor
+---
 
-Juan A. M.  
-Proyecto individual del módulo de Machine Learning del bootcamp de Data Science.
+**Juan Antonio Muñoz Moreno** · [github.com/JuanAntoniomm](https://github.com/JuanAntoniomm)
+
+Sociología (UGR) + Data Science. Este proyecto es la reconstrucción completa de una versión anterior cuyo registro de decisiones, con los errores encontrados y por qué se corrigieron, está en [`decisiones_mlgafas.md`](decisiones_mlgafas.md).
