@@ -73,3 +73,6 @@ _wtest
 
 # Script auxiliar de commits, no forma parte del proyecto
 hacer_commits_v2.sh
+
+# Script auxiliar de commits, no forma parte del proyecto
+hacer_commits_v2b.sh
