@@ -1,36 +1,24 @@
-"""
-generaloptica.py
-================
+"""Scraper de gafas graduadas de General Óptica (Grupo De Rigo).
 
-Scraper de gafas graduadas de General Óptica (Grupo De Rigo).
+Necesita Selenium, al contrario que el de Óptica 2000: aquí el catálogo se
+renderiza con JavaScript y una petición con requests devuelve la página vacía.
 
-POR QUÉ ESTE NECESITA NAVEGADOR Y EL DE ÓPTICA 2000 NO:
-    General Óptica renderiza el catálogo con JavaScript. Una petición normal
-    con `requests` devuelve la página vacía: sin precio, sin atributos, sin nada.
-    Comprobado el 1 ago 2026. Por eso aquí se usa Selenium.
+robots.txt: declara `Crawl-delay: 30` para User-agent *, y se respeta. Son unas
+15 horas de rastreo. Las fichas de producto no están prohibidas; solo la ruta
+interna /catalog/product/view/.
 
-CUMPLIMIENTO — esto no es opcional:
-    Su robots.txt declara `Crawl-delay: 30` para User-agent: *. Treinta segundos
-    entre peticiones. Las fichas de producto NO están prohibidas (solo la ruta
-    interna /catalog/product/view/). Se respeta el crawl-delay: son ~15 horas
-    para las ~1.770 fichas del catálogo, y ese es el precio de hacerlo bien.
-    Bajarlo es lo primero que te van a echar en cara si alguien mira el repo.
+Sobre el sitemap: trae 4.938 URLs de graduadas y la categoría navegable declaraba
+1.770 artículos, lo que hacía pensar que la diferencia era producto
+descatalogado. El rastreo lo desmintió: salieron 4.825 fichas con precio, así que
+solo unas 113 estaban de baja. El sitemap era el universo bueno. Las fichas sin
+precio se marcan como error, que es la forma barata de filtrarlas.
 
-OJO CON EL SITEMAP:
-    El sitemap trae 4.938 URLs de graduadas, pero la categoría navegable declara
-    1.770 artículos. Las ~3.168 de diferencia son casi con seguridad producto
-    descatalogado o sin stock. El universo válido es el catálogo, no el sitemap.
-    Este script enumera del sitemap y marca como error las fichas que ya no
-    tengan precio, que es la forma barata de filtrarlas.
-
-Uso:
     python src/scraping/generaloptica.py enumerar
     python src/scraping/generaloptica.py rastrear
-    python src/scraping/generaloptica.py rastrear --limite 5 --espera 5   # prueba
+    python src/scraping/generaloptica.py rastrear --limite 5 --espera 5
 
-Pensado para dejarlo corriendo días. Se para con Ctrl+C y continúa al relanzarlo.
-Lánzalo como script suelto (Programador de tareas de Windows o `nohup` en WSL),
-no desde un notebook: un notebook abierto en VS Code muere al cerrar el portátil.
+Se para con Ctrl+C y continúa al relanzarlo. Conviene lanzarlo como script suelto
+y no desde un notebook, que muere al cerrar el portátil.
 """
 
 from __future__ import annotations
@@ -76,8 +64,7 @@ def enumerar() -> list[str]:
         time.sleep(ESPERA)
     fichas = sorted({u for u in urls if PATRON_FICHA.search(u)})
     print(f"Sitemap: {len(urls)} URLs · {len(fichas)} fichas de graduadas")
-    print("Aviso: la categoría navegable declara ~1.770 artículos. La diferencia "
-          "son productos descatalogados que se filtrarán al no tener precio.")
+    print("Las que estén descatalogadas se filtrarán solas al no tener precio.")
     return fichas
 
 
@@ -106,11 +93,8 @@ def crear_driver():
 # Parseo
 # ---------------------------------------------------------------------------
 def _num_es(txt: str | None) -> float | None:
-    """Importe en formato de pantalla español: '1.234,50 €' -> 1234.5
-
-    El punto es separador de millares y la coma es el decimal. Se usa para todo
-    lo que se lee del DOM visible (el precio tachado, por ejemplo).
-    """
+    """Formato español, para lo que se lee del DOM visible: punto = millares,
+    coma = decimal. '1.234,50 €' -> 1234.5"""
     if not txt:
         return None
     m = re.search(r"(\d{1,3}(?:\.\d{3})*|\d+)(?:,(\d+))?", str(txt).replace("\xa0", " "))
@@ -123,11 +107,10 @@ def _num_es(txt: str | None) -> float | None:
 
 
 def _num_maquina(v) -> float | None:
-    """Importe en formato máquina: '125.250000' -> 125.25
+    """Formato del JSON-LD (offers.price), donde el punto es decimal.
+    '125.250000' -> 125.25
 
-    Aquí el punto es el separador DECIMAL. Es el formato del JSON-LD
-    (`offers.price`), que sigue el estándar de schema.org, no la convención
-    española. Confundir los dos formatos convierte 125,25 € en 125.250 €.
+    Confundirlo con el formato español convierte 125,25 € en 125.250 €.
     """
     if v is None:
         return None
@@ -196,12 +179,10 @@ def parsear(payload_json: str) -> dict:
     if d["en_oferta"] and d.get("precio_actual"):
         d["descuento_pct"] = round(100 * (1 - d["precio_actual"] / d["precio_anterior"]), 2)
 
-    # PVP = el target decidido para el modelo (ver decisiones_mlgafas.md, D5bis).
-    # Importa especialmente en esta tienda: General Óptica tenía el 1 ago 2026 una
-    # campaña del 25 % a catálogo completo, así que `precio_actual` es la promoción
-    # de esa semana y el precio de catálogo es el tachado. Si la campaña termina a
-    # mitad del rastreo, `precio_anterior` desaparece y `precio_actual` pasa a ser
-    # ya el PVP: esta fórmula lo resuelve en los dos casos.
+    # Target del modelo. Importa sobre todo aquí: esta tienda tenía una campaña
+    # del 25 % a catálogo completo, así que `precio_actual` es la promoción de la
+    # semana y el de catálogo es el tachado. Si la campaña acaba a mitad del
+    # rastreo, `precio_anterior` desaparece y `precio_actual` ya es el PVP.
     d["pvp"] = d["precio_anterior"] if d["en_oferta"] else d.get("precio_actual")
 
     return d

@@ -1,30 +1,14 @@
-"""
-cola.py
-=======
+"""Cola de trabajo en SQLite para los scrapers.
 
-Cola de trabajo en SQLite para los scrapers.
+No es el dataset (ese sale a CSV en data/raw/), sino el registro de qué URLs
+quedan, cuáles están hechas y cuáles fallaron, para poder parar el scrapeo de 15
+horas y reanudarlo sin empezar de cero.
 
-NO es donde vive el dataset. El dataset final sale a CSV en `data/raw/`.
-Esto es el cuaderno de bitácora: qué URLs quedan por visitar, cuáles ya están
-hechas y cuáles fallaron. Sirve para poder parar el scrapeo y reanudarlo sin
-empezar de cero.
+SQLite y no un fichero de texto porque las escrituras son atómicas: un corte a
+media línea deja el .txt inservible y la fila de SQLite entera o sin escribir.
 
-Por qué SQLite y no un .txt o un CSV:
-    Si el ordenador se apaga mientras escribes una línea en un fichero de texto,
-    el fichero queda a medias y no sabes por dónde ibas. SQLite hace escrituras
-    atómicas: o la fila entra entera o no entra. Viene en la librería estándar
-    de Python, no hay que instalar nada.
-
-Decisión de diseño importante — se guarda el HTML crudo:
-    La columna `payload` guarda la respuesta tal cual llegó. Si mañana descubres
-    un fallo en el parser, reparseas desde la base de datos en segundos en vez de
-    volver a rastrear la web durante 15 horas. Cuesta espacio en disco y ahorra
-    tiempo real.
-
-Regla de oro del reanudado:
-    Se escribe el dato PRIMERO y se marca como hecho DESPUÉS. Si el proceso muere
-    en medio, la peor consecuencia es repetir una ficha (inofensivo) en lugar de
-    saltársela (silencioso y difícil de detectar).
+`payload` guarda el HTML tal cual llegó, así que un fallo del parser se corrige
+reexportando en segundos en vez de volviendo a rastrear.
 """
 
 from __future__ import annotations
@@ -90,12 +74,9 @@ def pendientes(con: sqlite3.Connection, tienda: str, max_intentos: int = 3) -> l
 
 
 def guardar_ok(con: sqlite3.Connection, url: str, payload: str, ean: str | None) -> None:
-    """Guarda el contenido y marca la ficha como hecha.
-
-    El orden importa: se escribe payload y ts en el mismo UPDATE que el estado,
-    dentro de una única transacción. Si el proceso muere antes del commit, la
-    fila sigue en 'pendiente' y se reintentará.
-    """
+    """Guarda el contenido y marca la ficha como hecha, en un solo UPDATE. Si el
+    proceso muere antes del commit la fila sigue pendiente y se reintenta:
+    repetir una ficha es inofensivo, saltársela es un hueco silencioso."""
     con.execute(
         "UPDATE productos SET estado='hecho', payload=?, ean=?, ts=?, "
         "intentos=intentos+1, error=NULL WHERE url=?",

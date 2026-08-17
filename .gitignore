@@ -1,12 +1,4 @@
-# ---------------------------------------------------------------------------
-# DATOS
-# ---------------------------------------------------------------------------
-# Se publican los CSV del scrapeo para que el repo sea reproducible, pero NO la
-# base de datos de la cola: guarda el HTML crudo de las 6.121 fichas y pesa
-# 573 MB. GitHub rechaza archivos de más de 100 MB.
-#
-# OJO con el orden: git no puede "desexcluir" un archivo si su carpeta padre
-# está excluida, por eso se ignora el CONTENIDO (data/*) y no la carpeta.
+# Datos
 data/*
 !data/raw/
 data/raw/*
@@ -17,30 +9,19 @@ data/raw/*.db-wal
 data/raw/*.db-shm
 data/raw/*_prueba.csv
 data/raw/_debug*.html
-
-# Enriquecimiento generado con IA, descartado del proyecto (decisión D1): la
-# tabla correlaba 0,642 con los precios reales y erraba un 66,8 % de mediana.
-# Se conserva en local como evidencia del análisis, pero no forma parte del repo.
 data/raw/marcas_tier.csv
 data/raw/materiales_tier.csv
 data/raw/clasf_*.md
-
-# Dataset de la fuente anterior (Lentiamo). Se conserva en local porque es la
-# única fuente del peso de la montura, pendiente de recuperar cruzando por
-# código de modelo. No pertenece a la v2.
 data/raw/lentiamo_*.csv
 
-# ---------------------------------------------------------------------------
-# PERSONAL — nunca debe salir del ordenador
-# ---------------------------------------------------------------------------
-busquedatrabajo.md
-curriculum.md
+# Notas de trabajo
+decisiones_mlgafas.md
 óptica-productividad.md
-CLAUDE.md
+hacer_commits_v2.sh
+hacer_commits_v2b.sh
+_wtest
 
-# ---------------------------------------------------------------------------
 # Python
-# ---------------------------------------------------------------------------
 __pycache__/
 *.pyc
 *.pyo
@@ -50,8 +31,6 @@ __pycache__/
 dist/
 build/
 .eggs/
-
-# Entornos virtuales
 .env
 .venv
 env/
@@ -60,19 +39,8 @@ venv/
 # Jupyter
 .ipynb_checkpoints/
 
-# IDEs
+# Entorno
 .vscode/
 .idea/
-
-# Sistema
 .DS_Store
 Thumbs.db
-
-# Archivo vacío de pruebas, sin uso
-_wtest
-
-# Script auxiliar de commits, no forma parte del proyecto
-hacer_commits_v2.sh
-
-# Script auxiliar de commits, no forma parte del proyecto
-hacer_commits_v2b.sh

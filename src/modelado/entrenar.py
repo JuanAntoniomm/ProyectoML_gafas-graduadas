@@ -1,31 +1,13 @@
-"""
-entrenar.py
-===========
-
-Entrena el modelo final de PVP y lo guarda en `models/modelo_pvp.pkl`.
+"""Entrena el modelo final de PVP.
 
     python src/modelado/entrenar.py
 
-QUÉ SE APRENDIÓ DEL PROYECTO ANTERIOR Y AQUÍ NO SE REPITE:
+Escribe models/modelo_pvp.pkl y models/metricas.json. Las features y el split se
+importan de datos.py para que el script y los notebooks no puedan divergir.
 
-1. **El script reproduce el modelo.** La versión anterior decía "replica el
-   notebook" pero usaba otro grid de hiperparámetros, así que era imposible que
-   llegara al mismo resultado. Aquí el pipeline y las features viven en
-   `datos.py` y se importan; no hay dos definiciones que puedan divergir.
-
-2. **Las métricas se guardan junto al modelo.** El README anterior tenía cifras
-   que no salían de ningún sitio. Aquí `entrenar.py` escribe `metricas.json`
-   con lo que realmente dio el modelo guardado, y el README las cita de ahí.
-
-3. **El modelo se comprime.** El anterior pesaba 60 MB y necesitaba Git LFS, lo
-   que complica el despliegue en Streamlit Cloud. Este se guarda con
-   `compress=3` y ocupa 9,4 MB, así que va al repo sin LFS.
-
-Sobre el ajuste: el MAE en train (8,8 €) es la mitad que en test (18,9 €). Un
-RandomForest sin límite de profundidad memoriza el entrenamiento, y eso es
-esperable. Lo que cuenta es el test, y ahí el modelo reduce el error del
-baseline un 69 %. Acotar la profundidad para "arreglarlo" empeora el test —
-está medido más abajo.
+El MAE en train (8,8 €) es la mitad que en test (18,9 €): un RandomForest sin
+límite de profundidad memoriza el entrenamiento. Acotarlo empeora el test, está
+medido abajo.
 """
 
 from __future__ import annotations
@@ -52,24 +34,15 @@ from datos import CAT, FEATURES, NUM, RAIZ, SEMILLA, TARGET, cargar, separar  # 
 SALIDA_MODELO = RAIZ / "models" / "modelo_pvp.pkl"
 SALIDA_METRICAS = RAIZ / "models" / "metricas.json"
 
-# Hiperparámetros: EXACTAMENTE los del notebook 02, sin tocar nada más.
-#
-# El primer intento acotó `max_depth=20` para que el pickle ocupara menos, y el
-# MAE saltó de 18,90 € a 28,83 €. Con 112 marcas codificadas en one-hot, el
-# árbol necesita profundidad para aislar combinaciones de marca; en el proyecto
-# anterior, con menos marcas, ese límite no dolía.
-#
-# Medido sobre este dataset:
-#     n=150, por defecto      MAE 18,90   R² 0,850   9,4 MB   <- el que se usa
-#     min_samples_leaf=2      MAE 18,79   R² 0,858   6,2 MB
-#     max_depth=20            MAE 28,83   R² 0,717   2,8 MB
-#     n=300                   MAE 18,92   R² 0,850  18,7 MB
-#
-# `min_samples_leaf=2` daría un modelo algo mejor y un tercio más pequeño, pero
-# NO está evaluado en el notebook. Se prioriza que el script reproduzca el
-# análisis: tener dos configuraciones distintas en dos sitios fue exactamente
-# el defecto de la versión anterior. Queda como candidato a la próxima
-# iteración, evaluándolo primero en el notebook.
+# Los del notebook 02. Medido sobre este dataset:
+#     n=150, por defecto   MAE 18,90   R2 0,850    9,4 MB   <- el que se usa
+#     min_samples_leaf=2   MAE 18,79   R2 0,858    6,2 MB
+#     max_depth=20         MAE 28,83   R2 0,717    2,8 MB
+#     n=300                MAE 18,92   R2 0,850   18,7 MB
+# Acotar la profundidad para reducir el pickle sale caro: con 112 marcas en
+# one-hot el árbol necesita profundidad para aislar combinaciones de marca.
+# min_samples_leaf=2 daría algo mejor, pero no está evaluado en el notebook y
+# aquí prioriza reproducirlo.
 PARAMS = dict(
     n_estimators=150,
     random_state=SEMILLA,
@@ -78,13 +51,9 @@ PARAMS = dict(
 
 
 def construir_pipeline() -> Pipeline:
-    """Preprocesado + modelo, en un solo objeto.
-
-    Todo va dentro del Pipeline a propósito: los estadísticos de imputación se
-    aprenden solo con datos de entrenamiento, nunca con el test. Y el artefacto
-    guardado incluye el preprocesado, así que la app no puede aplicar una
-    transformación distinta de la del entrenamiento.
-    """
+    """Preprocesado y modelo en un solo objeto, para que los estadísticos de
+    imputación se aprendan solo con train y la app no pueda aplicar una
+    transformación distinta a la del entrenamiento."""
     prep = ColumnTransformer([
         ("num", Pipeline([("imp", SimpleImputer(strategy="median"))]), NUM),
         ("cat", Pipeline([
@@ -120,8 +89,8 @@ def main() -> None:
     m_dummy = metricas(te[TARGET], dummy.predict(te[FEATURES]))
 
     SALIDA_MODELO.parent.mkdir(parents=True, exist_ok=True)
-    # compress=3: reduce mucho el tamaño del pickle con un coste de carga
-    # despreciable. Importa para poder desplegar en Streamlit sin Git LFS.
+    # compress=3 baja el pickle de 60 a 9,4 MB, así que va al repo sin Git LFS y
+    # Streamlit Cloud puede desplegarlo.
     joblib.dump(pipe, SALIDA_MODELO, compress=3)
     mb = SALIDA_MODELO.stat().st_size / 1048576
 

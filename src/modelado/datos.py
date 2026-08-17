@@ -1,15 +1,7 @@
-"""
-datos.py
-========
+"""Carga y fusión del dataset.
 
-Carga y fusión del dataset. Lo usan el entrenamiento, la evaluación y la app,
-para que los tres partan EXACTAMENTE de los mismos datos y las mismas features.
-
-Por qué existe este módulo:
-    En la versión anterior del proyecto, `src/training.py` decía replicar el
-    notebook pero usaba otro grid de hiperparámetros, así que era imposible que
-    llegara al mismo modelo. Tres fuentes de verdad dando tres respuestas.
-    Aquí la definición de features y de split vive en UN solo sitio.
+Lo importan el entrenamiento, los notebooks y la app, para que los tres partan de
+los mismos datos, las mismas features y el mismo split.
 """
 
 from __future__ import annotations
@@ -27,9 +19,8 @@ from marcas import asignar_grupo  # noqa: E402
 SEMILLA = 42
 TARGET = "pvp"
 
-# Features finales. Son la INTERSECCIÓN de lo que publican las dos tiendas.
-# Perder forma, tipo de montura, longitud de varilla y talla se midió en
-# 0,09 € de MAE: está en el ruido (ver notebook 02).
+# Intersección de lo que publican las dos tiendas. Perder forma, tipo de montura,
+# longitud de varilla y talla costó 0,09 € de MAE (notebook 02).
 NUM = ["ancho_lente", "ancho_puente"]
 CAT = ["marca", "grupo", "tienda", "material_montura", "color", "genero"]
 FEATURES = NUM + CAT
@@ -41,8 +32,7 @@ def cargar() -> pd.DataFrame:
     go = pd.read_csv(RAIZ / "data/raw/generaloptica_graduadas.csv", dtype={"ean": str})
     go["ean"] = go["ean"].str.split(".").str[0]
 
-    # Disponibilidad: cada tienda la codifica distinto y al fusionar por
-    # intersección de columnas ambas se caerían. Se unifica antes.
+    # Cada tienda codifica la disponibilidad con distinto nombre y formato.
     o2["en_stock"] = o2["disponible"].astype(bool)
     go["en_stock"] = (go["disponibilidad"].str.split("/").str[-1]
                       .isin(["InStock", "InStoreOnly", "OnlineOnly"]))
@@ -54,16 +44,6 @@ def cargar() -> pd.DataFrame:
 
 
 def separar(d: pd.DataFrame, test_size: float = 0.2):
-    """Split agrupado por EAN.
-
-    NO puede ser aleatorio: hay 110 productos idénticos (mismo EAN) presentes en
-    las dos tiendas. Con `train_test_split` normal, un producto podría caer en
-    train por una tienda y su gemelo exacto en test por la otra. El modelo lo
-    habría visto durante el entrenamiento y la métrica de test sería mentira.
-
-    Los productos sin EAN reciben una clave única propia para que no acaben
-    agrupados todos juntos en el mismo lado.
-    """
     sin_ean = pd.Series("sin-ean-" + d.index.astype(str), index=d.index)
     grupos = d["ean"].where(d["ean"].notna(), sin_ean)
     gss = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=SEMILLA)
@@ -76,8 +56,7 @@ def separar(d: pd.DataFrame, test_size: float = 0.2):
 
 
 def opciones() -> dict:
-    """Valores posibles de cada variable categórica, para los desplegables de
-    la app. Se calculan del dataset real para que no haya opciones inventadas."""
+    """Valores posibles de cada categórica, para los desplegables de la app."""
     d = cargar()
     return {
         "marca": sorted(d["marca"].dropna().unique()),

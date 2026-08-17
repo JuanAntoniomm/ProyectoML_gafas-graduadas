@@ -1,14 +1,8 @@
-"""
-exportar.py
-===========
+"""Convierte la cola SQLite en los CSV de data/raw/.
 
-Convierte la cola SQLite en los CSV de `data/raw/`.
+Reparsea desde el payload guardado, sin tocar la web: un fallo del parser se
+corrige y se reejecuta esto, y el dataset se regenera en segundos.
 
-Reparsea desde el `payload` guardado, sin tocar la web. Eso significa que si
-encuentras un fallo en un parser, lo corriges y vuelves a ejecutar esto: el
-dataset se regenera en segundos en vez de en 15 horas de rastreo.
-
-Uso:
     python src/scraping/exportar.py
     python src/scraping/exportar.py --tienda optica2000
 """

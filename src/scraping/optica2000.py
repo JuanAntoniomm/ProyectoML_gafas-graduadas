@@ -1,23 +1,14 @@
-"""
-optica2000.py
-=============
+"""Scraper de gafas graduadas de Óptica 2000 (Grandvisión / EssilorLuxottica).
 
-Scraper de gafas graduadas de Óptica 2000 (Grandvisión Spain / EssilorLuxottica).
+Renderiza en servidor, así que basta requests: el HTML de una petición normal ya
+trae precio, atributos y medidas.
 
-Por qué esta tienda se rastrea con requests y no con navegador:
-    Óptica 2000 renderiza en servidor. El HTML que devuelve una petición normal
-    ya trae precio, atributos y medidas. No hace falta Selenium. Comprobado el
-    1 ago 2026.
+robots.txt (1 ago 2026): para User-agent * solo prohíbe /cancela-tu-cita y
+/reprograma-tu-cita. No declara Crawl-delay; se usa 1 s.
 
-Cumplimiento (robots.txt comprobado el 1 ago 2026):
-    Para User-agent: * solo prohíbe /cancela-tu-cita y /reprograma-tu-cita.
-    Categorías y fichas están permitidas. No declara Crawl-delay para agentes
-    genéricos, pero aquí se usa 1 segundo por educación.
-
-Uso:
     python src/scraping/optica2000.py enumerar     # sitemap -> cola
     python src/scraping/optica2000.py rastrear     # cola -> base de datos
-    python src/scraping/optica2000.py rastrear --limite 50    # prueba corta
+    python src/scraping/optica2000.py rastrear --limite 50
 
 Se puede parar con Ctrl+C y relanzar: continúa por donde iba.
 """
@@ -44,8 +35,6 @@ SITEMAP = f"{BASE}/sitemap.xml"
 ESPERA = 1.0          # segundos entre peticiones
 TIMEOUT = 30
 
-# Identificarse honestamente. Un scraper que se hace pasar por Chrome es lo
-# primero que un revisor técnico te va a criticar.
 CABECERAS = {
     "User-Agent": (
         "ProyectoML-gafas/1.0 (proyecto académico de análisis de precios; "
@@ -62,12 +51,9 @@ PATRON_FICHA = re.compile(r"/gafas-graduadas/[^/]+/(\d{8,})$")
 # Enumeración
 # ---------------------------------------------------------------------------
 def enumerar() -> list[str]:
-    """Saca las URLs de ficha del sitemap.
-
-    Se enumera desde el sitemap y no desde las páginas de categoría porque es
-    la vía que el propio sitio publica para ser rastreado, y porque las
-    categorías paginan de 24 en 24 (más peticiones para el mismo resultado).
-    """
+    """URLs de ficha del sitemap. Se enumera de ahí y no de las categorías
+    porque es la vía que el sitio publica para ser rastreado, y porque las
+    categorías paginan de 24 en 24."""
     r = requests.get(SITEMAP, headers=CABECERAS, timeout=TIMEOUT)
     r.raise_for_status()
     urls = re.findall(r"<loc>([^<]+)</loc>", r.text)
@@ -80,10 +66,8 @@ def enumerar() -> list[str]:
 # Parseo
 # ---------------------------------------------------------------------------
 def _num(txt: str | None) -> float | None:
-    """Formato de pantalla español: '169,90 €' -> 169.9 · '123 mm' -> 123.0
-
-    Punto = millares, coma = decimal. Para texto visible de la página.
-    """
+    """Formato español: punto = millares, coma = decimal.
+    '169,90 €' -> 169.9 · '123 mm' -> 123.0"""
     if not txt:
         return None
     m = re.search(r"(\d{1,3}(?:\.\d{3})*|\d+)(?:,(\d+))?", txt.replace("\xa0", " "))
@@ -98,11 +82,10 @@ def _num(txt: str | None) -> float | None:
 
 
 def _num_maquina(v) -> float | None:
-    """Formato máquina: '125.250000' -> 125.25
+    """Formato del JSON-LD de schema.org: el punto es decimal.
+    '125.250000' -> 125.25
 
-    El punto es el separador DECIMAL. Es lo que usa el JSON-LD de schema.org.
-    Pasarlo por _num() lo convertiría en 125.250 €. Es un fallo silencioso:
-    no revienta, solo multiplica los precios por mil.
+    Pasarlo por _num() daría 125.250 €: no revienta, solo multiplica por mil.
     """
     if v is None:
         return None
@@ -126,20 +109,12 @@ ETIQUETAS = {
 
 
 def parsear(html: str, url: str) -> dict:
-    """Extrae los campos de una ficha.
-
-    Estrategia en dos pasos:
-      1. JSON-LD si existe (estable, con esquema).
-      2. Etiquetas de texto en español si no (frágil ante rediseños, pero es
-         lo que publica esta ficha).
-
-    El HTML crudo queda guardado en la base de datos, así que si este parser
-    falla se corrige y se reparsea sin volver a rastrear.
-    """
+    """Extrae los campos de una ficha: primero JSON-LD si lo hay, y si no las
+    etiquetas de texto en español."""
     sopa = BeautifulSoup(html, "html.parser")
-    # Todas las claves se declaran de entrada, aunque queden a None. Si un campo
-    # solo aparece cuando existe, el CSV acaba con columnas distintas según la
-    # ficha y el DataFrame se llena de NaN sin que se sepa por qué.
+    # Todas las claves declaradas de entrada aunque queden a None: si un campo
+    # solo apareciera cuando existe, el CSV tendría columnas distintas según la
+    # ficha.
     d: dict = {
         "url": url, "tienda": TIENDA, "ean": None, "nombre": None, "marca": None,
         "mpn": None, "color": None, "material_montura": None, "forma": None,
@@ -162,10 +137,8 @@ def parsear(html: str, url: str) -> dict:
         for obj in (data if isinstance(data, list) else [data]):
             if not isinstance(obj, dict) or obj.get("@type") != "Product":
                 continue
-            # OJO: NO usar d.setdefault(). Todas las claves están declaradas de
-            # entrada con valor None, y setdefault solo escribe si la clave NO
-            # EXISTE — no si vale None. Con setdefault este bloque entero no
-            # hacía nada. Mismo error que el `campo not in d` de más abajo.
+            # No sirve d.setdefault(): las claves ya existen con valor None y
+            # setdefault solo escribe si faltan.
             def poner(clave, valor):
                 if d.get(clave) is None and valor is not None:
                     d[clave] = valor
@@ -181,11 +154,10 @@ def parsear(html: str, url: str) -> dict:
                 poner("precio_actual", _num_maquina(ofertas.get("price")))
 
     # --- 2. Texto ---
-    # Fuera scripts y estilos, pero SOLO AHORA: el bloque JSON-LD de arriba vive
-    # dentro de un <script>, así que eliminarlos antes lo dejaría inservible.
-    # Óptica 2000 sirve en su bundle de JavaScript todas las cadenas de interfaz
-    # posibles ("Añadir al carrito", "Este producto no está disponible"...), de
-    # modo que buscarlas sin limpiar da positivo en el 100 % de las fichas.
+    # Los scripts se quitan aquí y no antes, porque el JSON-LD vive dentro de
+    # uno. Hay que quitarlos: el bundle de JS trae todas las cadenas de interfaz
+    # posibles ("Añadir al carrito", "Este producto no está disponible"), así que
+    # buscarlas sin limpiar da positivo en el 100 % de las fichas.
     for etiqueta in sopa(["script", "style", "noscript"]):
         etiqueta.decompose()
 
@@ -197,9 +169,6 @@ def parsear(html: str, url: str) -> dict:
         d["nombre"] = h1.get_text(strip=True) if h1 else None
 
     # Etiqueta y valor van en líneas consecutivas.
-    # OJO: la condición es `d.get(campo) is None`, no `campo not in d`. Todas las
-    # claves existen desde el principio (puestas a None), así que comprobar la
-    # pertenencia no serviría de nada y no se extraería ningún atributo.
     for i, linea in enumerate(lineas[:-1]):
         campo = ETIQUETAS.get(linea.strip())
         if campo and d.get(campo) is None:
@@ -207,14 +176,12 @@ def parsear(html: str, url: str) -> dict:
             d[campo] = _num(valor) if campo.startswith(("ancho", "largo")) else valor
 
     # --- Precios ---
-    # En la ficha real los trozos van en nodos de texto SEPARADOS:
-    #     "ahora:" / "38 €" / "antes:" / "76 €" / "-50%" / "OUTLET"
-    # Por eso se aplana el texto antes de buscar: así "ahora:" y su importe
-    # quedan contiguos aunque en el DOM estén en elementos distintos.
+    # En la ficha los trozos van en nodos separados ("ahora:" / "38 €" /
+    # "antes:" / "76 €"), así que se aplana el texto para que queden contiguos.
     plano = re.sub(r"\s+", " ", texto)
 
-    # Fuera la línea de financiación ANTES de buscar precios. Si se deja,
-    # "o 3 x 56,33 € sin intereses" puede colarse como precio del producto.
+    # La financiación fuera antes de buscar precios: "o 3 x 56,33 € sin
+    # intereses" se colaría como precio del producto.
     plano_precios = re.sub(
         r"o?\s*\d+\s*x\s*[\d.,]+\s*€\s*sin\s+intereses", " ", plano, flags=re.I
     )
@@ -233,17 +200,12 @@ def parsear(html: str, url: str) -> dict:
     if d["en_oferta"] and d.get("precio_actual"):
         d["descuento_pct"] = round(100 * (1 - d["precio_actual"] / d["precio_anterior"]), 2)
 
-    # PVP = el target decidido para el modelo (ver decisiones_mlgafas.md, D5bis).
-    # Si hay oferta, el PVP es el precio tachado; si no, el precio a secas es ya
-    # el de catálogo. Se calcula aquí para que el CSV traiga el target listo y
-    # nadie tenga que reconstruirlo a mano en el notebook.
+    # Target del modelo: con oferta, el PVP es el precio tachado; sin ella, el
+    # precio a secas ya es el de catálogo.
     d["pvp"] = d["precio_anterior"] if d["en_oferta"] else d["precio_actual"]
 
-    # OUTLET: hay que acotarlo al bloque de precio.
-    # "OUTLET" es también una entrada del menú de navegación, así que buscarlo en
-    # toda la página lo daba TRUE en las 12 fichas de una muestra real — un campo
-    # constante, inútil y engañoso. Solo cuenta si hay descuento y la etiqueta
-    # aparece pegada al precio.
+    # "OUTLET" es también una entrada del menú, así que buscarlo en toda la
+    # página lo daba True en el 100 % de las fichas. Solo cuenta pegado al precio.
     d["outlet"] = False
     if ahora_m:
         ventana = plano_precios[ahora_m.start(): ahora_m.start() + 120]
@@ -254,41 +216,29 @@ def parsear(html: str, url: str) -> dict:
         re.search(r"solo\s+(a\s+la|la)?\s*montura", plano, re.I)
     )
 
-    # Producto descatalogado o sin stock: la ficha responde 200 y tiene marca y
-    # modelo, pero no trae ni precio ni atributos. El sitemap las sigue listando.
-    # Detectado en la primera tanda de 80 fichas (1 de 80).
+    # Descatalogado o sin stock: la ficha responde 200 y tiene marca y modelo,
+    # pero ni precio ni atributos. El sitemap las sigue listando.
     d["disponible"] = "Este producto no está disponible" not in plano
 
-    # Canal de venta. Son estados mutuamente excluyentes, verificado en la web:
-    #   comprable online -> "Entrega estimada ..." + "Añadir al carrito"
-    #   solo en tienda   -> "Encontrar una tienda", sin carrito ni entrega
-    # No es lo mismo que estar agotado: el producto existe, pero no se vende por
-    # web. Afecta al 25 % del catálogo y no se reparte por igual entre marcas.
+    # Distinto de estar agotado: el producto existe pero no se vende por web,
+    # solo en tienda. Afecta al 25 % del catálogo, repartido de forma desigual
+    # entre marcas.
     d["venta_online"] = bool(re.search(r"A[ñn]adir al carrito", plano, re.I))
 
     # --- Marca y modelo, desde las migas de pan ---
-    # NO usar el enlace a /gafas-graduadas/{marca}: solo existe para las 9 marcas
-    # del menú de navegación. Arnette, DbyD, Miraflex y el resto del catálogo no
-    # tienen página de categoría, así que ese método deja `marca` a None en buena
-    # parte de las fichas — y marca es la variable más importante del modelo.
-    #
-    # La estructura correcta es siempre la misma (verificada en 8 marcas reales
-    # el 2 ago 2026, incluidas las que no tienen categoría propia):
-    #
     #     <ul class="breadcrumbs">
     #       <li>GAFAS GRADUADAS</li>
-    #       <li>Armani Exchange</li>                       <- marca
+    #       <li>Armani Exchange</li>                           <- marca
     #       <li class="...current-page-text">AX3077 8001</li>  <- modelo
-    #     </ul>
     #
-    # OJO: hay que coger los <li> HIJOS DIRECTOS de ese <ul>. Los <li>
-    # envoltorios y los <a> internos también llevan "breadcrumb" en su clase; si
-    # se recorren todos los elementos que casan, el último con texto acaba siendo
-    # el de la marca y `modelo` sale mal (fallo real detectado en la primera
-    # tanda de 20 fichas).
+    # Hay que coger los <li> hijos DIRECTOS: los envoltorios y los <a> internos
+    # también llevan "breadcrumb" en la clase, y recorriéndolos todos el modelo
+    # sale con el nombre de la marca.
     #
-    # Ventaja añadida: la marca sale con su grafía correcta — "Dolce&Gabbana",
-    # "DbyD" — que el respaldo por slug convertiría en "Dolcegabbana".
+    # No sirve el enlace a /gafas-graduadas/{marca}: solo existe para las 9
+    # marcas del menú, así que Arnette, DbyD y el resto quedarían sin marca.
+    # Además las migas dan la grafía correcta ("Dolce&Gabbana"), que el respaldo
+    # por slug convertiría en "Dolcegabbana".
     migas: list[str] = []
     ul = sopa.find("ul", class_=re.compile("breadcrumb", re.I))
     if ul:
@@ -323,20 +273,18 @@ def parsear(html: str, url: str) -> dict:
 # Comprobaciones del parser
 # ---------------------------------------------------------------------------
 def autotest() -> None:
-    """Comprueba el parser contra fichas sintéticas que reproducen lo observado
-    en la web el 1 ago 2026. No toca la red.
+    """Comprueba el parser contra fichas sintéticas copiadas del maquetado real.
+    No toca la red.
 
         python src/scraping/optica2000.py autotest
     """
-    # IMPORTANTE: los bloques de precio van en nodos de texto SEPARADOS, tal y
-    # como se observó en la ficha real (nodos 178-183 de
-    # /gafas-graduadas/rayban-0ry9078v-3950-48-16/8056597941723 el 1 ago 2026).
-    # Un fixture con "ahora: 38 € antes: 76 €" en una sola línea pasaría el test
-    # sin comprobar el caso que de verdad ocurre.
+    # Los precios van en nodos separados, como en la ficha real. Un fixture con
+    # "ahora: 38 € antes: 76 €" en una sola línea pasaría el test sin comprobar
+    # el caso que de verdad ocurre.
     base = (
         "<html><body>"
-        # El menú de navegación lleva OUTLET en TODAS las páginas. Va en el
-        # fixture a propósito: sin él, el test no detecta el falso positivo.
+        # El OUTLET del menú va aquí a propósito: sin él el test no detecta el
+        # falso positivo.
         "<nav><a>GAFAS DE SOL</a><a>OUTLET</a><a>PROMOCIONES</a></nav>"
         "<h1>Ray-Ban 0RX6448 3094</h1>"
         "<div>0.0</div><div>No se encontraron reviews para este producto</div>"
@@ -370,7 +318,7 @@ def autotest() -> None:
     assert _num_maquina("125.250000") == 125.25, "formato máquina mal parseado"
 
     assert sin["ean"] == "8056597266673"
-    # 169 y no 56,33: la línea de financiación se elimina antes de buscar
+    # 169 y no 56,33, que es la cuota de financiación
     assert sin["precio_actual"] == 169.0, f"cogió la financiación: {sin['precio_actual']}"
     assert sin["precio_anterior"] is None
     assert sin["en_oferta"] is False and sin["descuento_pct"] is None
@@ -385,17 +333,15 @@ def autotest() -> None:
     assert con["precio_actual"] == 38.0 and con["precio_anterior"] == 76.0
     assert con["en_oferta"] is True and con["descuento_pct"] == 50.0
     assert con["outlet"] is True
-    # El "-10% de descuento" de la newsletter no debe contaminar nada
+    # 50 y no 10: el "-10% de descuento" de la newsletter no contamina
     assert con["descuento_pct"] == 50.0
 
     assert set(sin) == set(con), "las dos fichas deben dar las mismas columnas"
 
-    # --- Marca y modelo, con los cuatro casos reales observados ---
-    # Incluye marcas SIN página de categoría (Arnette, DbyD, Miraflex), que es
-    # justo donde fallaba el método anterior basado en el enlace de marca.
-    # Reproduce el maquetado REAL de las migas de pan, con los <li> envoltorios
-    # y los <a> internos que también llevan "breadcrumb" en la clase. Sin ellos,
-    # el test no detecta el fallo de quedarse con la marca en vez del modelo.
+    # Marca y modelo. Incluye marcas sin página de categoría (Arnette, DbyD,
+    # Nanovista) y reproduce los <li> envoltorios y los <a> internos del
+    # maquetado real; sin ellos el test no detecta que el modelo salga con el
+    # nombre de la marca.
     casos = [
         ("Armani Exchange AX3077 8001", "Armani Exchange", "AX3077 8001"),
         ("Arnette 0AN7183 2718", "Arnette", "0AN7183 2718"),
@@ -436,11 +382,9 @@ def rastrear(limite: int | None = None, mezclar: bool = False) -> None:
     con = cola.abrir("scrape.db")
     urls = cola.pendientes(con, TIENDA)
     if mezclar:
-        # Orden barajado pero REPRODUCIBLE (semilla fija). El sitemap va
-        # alfabético, así que sin esto una tanda corta son todas de la misma
-        # marca: las 80 primeras fichas fueron las 80 de Armani Exchange.
-        # Barajando, cualquier interrupción deja una muestra representativa
-        # de todo el catálogo en vez de la mitad del abecedario.
+        # Barajado con semilla fija, para que sea reproducible. El sitemap va
+        # alfabético: sin esto las 80 primeras fichas fueron las 80 de Armani
+        # Exchange, y una interrupción deja media muestra del abecedario.
         random.Random(42).shuffle(urls)
     if limite:
         urls = urls[:limite]
@@ -461,14 +405,11 @@ def rastrear(limite: int | None = None, mezclar: bool = False) -> None:
                 r.raise_for_status()
                 d = parsear(r.text, url)
                 if d.get("precio_actual") is None:
-                    # Descatalogado o sin stock. La ficha responde 200 y tiene
-                    # marca y modelo, pero ni precio ni atributos. No es un fallo
-                    # del scraper: se aparta para que no ensucie el dataset.
+                    # Descatalogado o sin stock: no es un fallo del scraper, se
+                    # aparta para que no ensucie el dataset.
                     cola.guardar_error(con, url, "sin precio (no disponible)")
                     no_disp += 1
                 else:
-                    # Escribir primero, marcar como hecho después: guardar_ok lo
-                    # hace en una sola transacción.
                     cola.guardar_ok(con, url, r.text, d.get("ean"))
                     ok += 1
             except Exception as e:                      # noqa: BLE001
